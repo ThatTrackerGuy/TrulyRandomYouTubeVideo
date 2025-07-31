@@ -2,43 +2,56 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Batch YouTube Video Checker</title>
+  <title>Fast Random YouTube Video</title>
   <style>
     body {
-      background-color: #121212;
-      color: #e0e0e0;
-      font-family: monospace;
-      padding: 20px;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 40px;
     }
 
     button {
-      padding: 12px 20px;
-      background-color: #ff0000;
+      padding: 12px 24px;
+      font-size: 18px;
+      background-color: red;
       color: white;
-      font-size: 16px;
       border: none;
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
-      margin-bottom: 20px;
     }
 
-    pre {
-      background-color: #1e1e1e;
-      padding: 16px;
-      border-radius: 6px;
-      overflow-x: auto;
-      white-space: pre-wrap;
+    #status {
+      margin-top: 20px;
+      font-size: 18px;
+    }
+
+    a {
+      color: #00bfff;
+    }
+
+    iframe {
+      margin-top: 20px;
+      width: 560px;
+      height: 315px;
+      border: none;
+      display: none;
     }
   </style>
 </head>
 <body>
 
-  <h2>🎯 YouTube ID Generator + Checker (30 at once)</h2>
-  <button onclick="generateAndCheck()">Generate 30 URLs</button>
-  <pre id="logOutput">Click the button above to start...</pre>
+  <h1>⚡ Fast Random YouTube Video</h1>
+  <button onclick="startSearch()">Generate Random Video</button>
+  <p id="status"></p>
+  <iframe id="videoFrame"></iframe>
 
   <script>
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const batchSize = 30;
+
+    let startTime, timerInterval;
 
     function generateRandomID() {
       let id = '';
@@ -48,49 +61,56 @@
       return id;
     }
 
-    async function checkVideo(id) {
+    async function videoExists(videoId) {
       const proxy = 'https://corsproxy.io/?';
-      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}`;
+      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}`;
       try {
         const res = await fetch(proxy + encodeURIComponent(url));
-        return res.ok;
-      } catch (err) {
-        return false;
+        return res.ok ? videoId : null;
+      } catch {
+        return null;
       }
     }
 
-    async function generateAndCheck() {
-      const output = document.getElementById('logOutput');
-      output.textContent = 'Generating and checking 30 video IDs...\n\n';
-      
-      const promises = [];
-      const ids = [];
+    function updateTimer() {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      document.getElementById('status').innerHTML =
+        `Looking for a valid video. This might take a while.<br>Elapsed Time: ${elapsed} seconds`;
+    }
 
-      // Generate 30 IDs
-      for (let i = 0; i < 30; i++) {
-        const id = generateRandomID();
-        ids.push(id);
-        promises.push(checkVideo(id));
-      }
+    async function startSearch() {
+      document.getElementById('videoFrame').style.display = 'none';
+      document.getElementById('status').innerHTML = `Starting search...`;
 
-      const results = await Promise.all(promises);
+      startTime = Date.now();
+      clearInterval(timerInterval);
+      timerInterval = setInterval(updateTimer, 1000);
+      updateTimer();
 
-      let log = '';
-      for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-        const working = results[i];
-        log += `URL #${i + 1}:\n`;
-        log += `|\\| ${id}\n`;
-        log += `?working = ${working ? 'TRUE' : 'FALSE'}\n`;
-        if (working) {
-          log += `✅ https://www.youtube.com/watch?v=${id}\n`;
-        } else {
-          log += `trying again~___\n`;
+      while (true) {
+        // Generate a batch of 30 random IDs
+        const ids = Array.from({ length: batchSize }, generateRandomID);
+
+        // Check all 30 in parallel
+        const checks = await Promise.all(ids.map(videoExists));
+
+        // Find first valid one
+        const valid = checks.find(id => id !== null);
+
+        if (valid) {
+          clearInterval(timerInterval);
+          const url = `https://www.youtube.com/watch?v=${valid}`;
+          document.getElementById('status').innerHTML =
+            `✅ Found a valid video!<br><a href="${url}" target="_blank">${url}</a>`;
+          const iframe = document.getElementById('videoFrame');
+          iframe.src = `https://www.youtube.com/embed/${valid}`;
+          iframe.style.display = 'block';
+          break;
         }
-        log += '\n';
-      }
 
-      output.textContent = log;
+        // No valid video found, try another batch
+        await new Promise(resolve => setTimeout(resolve, 200)); // brief pause to avoid overload
+      }
     }
   </script>
 </body>
