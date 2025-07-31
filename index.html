@@ -2,31 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Truly Random YouTube Video</title>
+  <title>Actually Random YouTube Video</title>
   <style>
     body {
-      background: #0f0f0f;
+      background: #111;
       color: #fff;
       text-align: center;
-      font-family: Arial, sans-serif;
+      font-family: sans-serif;
       padding: 50px;
     }
 
     button {
-      padding: 12px 20px;
-      font-size: 18px;
-      background: #ff0000;
+      padding: 10px 20px;
+      background-color: red;
       color: white;
+      font-size: 18px;
       border: none;
-      border-radius: 5px;
+      border-radius: 8px;
       cursor: pointer;
     }
 
     a {
-      color: #00aaff;
-      text-decoration: none;
-      font-size: 18px;
-      word-break: break-all;
+      color: #00bfff;
+      font-size: 16px;
     }
 
     iframe {
@@ -38,16 +36,15 @@
   </style>
 </head>
 <body>
-
-  <h1>🎲 Truly Random YouTube Video</h1>
-  <button onclick="getRandomVideo()">Generate Video</button>
-  <p id="output"></p>
-  <iframe id="videoFrame" style="display:none;"></iframe>
+  <h1>🎯 Actually Random YouTube Video</h1>
+  <button onclick="findValidVideo()">Generate</button>
+  <p id="result"></p>
+  <iframe id="videoFrame" style="display: none;"></iframe>
 
   <script>
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
-    function generateRandomID() {
+    function generateVideoId() {
       let id = '';
       for (let i = 0; i < 11; i++) {
         id += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -55,33 +52,39 @@
       return id;
     }
 
-    function checkVideoExists(videoId, callback) {
-      const img = new Image();
-      img.onload = () => callback(true, videoId);
-      img.onerror = () => callback(false, videoId);
-      img.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+    async function checkIfVideoExists(id) {
+      const proxy = 'https://corsproxy.io/?';
+      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}`;
+
+      try {
+        const res = await fetch(proxy + encodeURIComponent(url));
+        if (res.ok) return true;
+        else return false;
+      } catch (err) {
+        return false;
+      }
     }
 
-    function getRandomVideo() {
-      document.getElementById('output').textContent = 'Searching...';
+    async function findValidVideo() {
+      document.getElementById('result').textContent = 'Searching for a valid video...';
       document.getElementById('videoFrame').style.display = 'none';
 
-      function tryFetch() {
-        const id = generateRandomID();
-        checkVideoExists(id, (exists, videoId) => {
-          if (exists) {
-            const url = `https://www.youtube.com/watch?v=${videoId}`;
-            document.getElementById('output').innerHTML = `<a href="${url}" target="_blank">${url}</a>`;
-            const iframe = document.getElementById('videoFrame');
-            iframe.src = `https://www.youtube.com/embed/${videoId}`;
-            iframe.style.display = 'block';
-          } else {
-            tryFetch(); // Retry until a valid video is found
-          }
-        });
+      let attempts = 0;
+      while (attempts < 50) {  // max 50 tries
+        const id = generateVideoId();
+        const exists = await checkIfVideoExists(id);
+        if (exists) {
+          const link = `https://www.youtube.com/watch?v=${id}`;
+          document.getElementById('result').innerHTML = `<a href="${link}" target="_blank">${link}</a>`;
+          const iframe = document.getElementById('videoFrame');
+          iframe.src = `https://www.youtube.com/embed/${id}`;
+          iframe.style.display = 'block';
+          return;
+        }
+        attempts++;
       }
 
-      tryFetch();
+      document.getElementById('result').textContent = 'Failed to find a valid video after many tries. Try again!';
     }
   </script>
 </body>
