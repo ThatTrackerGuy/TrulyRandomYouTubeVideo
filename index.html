@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Truly Random YouTube Video</title>
+  <style>
+    body {
+      background: #0f0f0f;
+      color: #fff;
+      text-align: center;
+      font-family: Arial, sans-serif;
+      padding: 50px;
+    }
+
+    button {
+      padding: 12px 20px;
+      font-size: 18px;
+      background: #ff0000;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    a {
+      color: #00aaff;
+      text-decoration: none;
+      font-size: 18px;
+      word-break: break-all;
+    }
+
+    iframe {
+      margin-top: 20px;
+      width: 560px;
+      height: 315px;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🎲 Truly Random YouTube Video</h1>
+  <button onclick="getRandomVideo()">Generate Video</button>
+  <p id="output"></p>
+  <iframe id="videoFrame" style="display:none;"></iframe>
+
+  <script>
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+    function generateRandomID() {
+      let id = '';
+      for (let i = 0; i < 11; i++) {
+        id += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return id;
+    }
+
+    function checkVideoExists(videoId, callback) {
+      const img = new Image();
+      img.onload = () => callback(true, videoId);
+      img.onerror = () => callback(false, videoId);
+      img.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
+    }
+
+    function getRandomVideo() {
+      document.getElementById('output').textContent = 'Searching...';
+      document.getElementById('videoFrame').style.display = 'none';
+
+      function tryFetch() {
+        const id = generateRandomID();
+        checkVideoExists(id, (exists, videoId) => {
+          if (exists) {
+            const url = `https://www.youtube.com/watch?v=${videoId}`;
+            document.getElementById('output').innerHTML = `<a href="${url}" target="_blank">${url}</a>`;
+            const iframe = document.getElementById('videoFrame');
+            iframe.src = `https://www.youtube.com/embed/${videoId}`;
+            iframe.style.display = 'block';
+          } else {
+            tryFetch(); // Retry until a valid video is found
+          }
+        });
+      }
+
+      tryFetch();
+    }
+  </script>
+</body>
+</html>
