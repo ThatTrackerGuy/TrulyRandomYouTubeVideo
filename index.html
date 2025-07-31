@@ -5,26 +5,30 @@
   <title>Actually Random YouTube Video</title>
   <style>
     body {
-      background: #111;
-      color: #fff;
+      background-color: #121212;
+      color: white;
+      font-family: Arial, sans-serif;
       text-align: center;
-      font-family: sans-serif;
-      padding: 50px;
+      padding: 40px;
     }
 
     button {
-      padding: 10px 20px;
-      background-color: red;
-      color: white;
+      padding: 12px 24px;
       font-size: 18px;
+      background-color: #FF0000;
+      color: white;
       border: none;
       border-radius: 8px;
       cursor: pointer;
     }
 
+    #status {
+      margin-top: 20px;
+      font-size: 18px;
+    }
+
     a {
       color: #00bfff;
-      font-size: 16px;
     }
 
     iframe {
@@ -32,19 +36,23 @@
       width: 560px;
       height: 315px;
       border: none;
+      display: none;
     }
   </style>
 </head>
 <body>
-  <h1>🎯 Actually Random YouTube Video</h1>
-  <button onclick="findValidVideo()">Generate</button>
-  <p id="result"></p>
-  <iframe id="videoFrame" style="display: none;"></iframe>
+
+  <h1>🎲 Actually Random YouTube Video</h1>
+  <button onclick="startSearch()">Generate Random Video</button>
+  <p id="status"></p>
+  <iframe id="videoFrame"></iframe>
 
   <script>
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
-    function generateVideoId() {
+    let startTime, timerInterval;
+
+    function generateRandomID() {
       let id = '';
       for (let i = 0; i < 11; i++) {
         id += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -52,39 +60,45 @@
       return id;
     }
 
-    async function checkIfVideoExists(id) {
+    async function videoExists(videoId) {
       const proxy = 'https://corsproxy.io/?';
-      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}`;
-
+      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}`;
       try {
         const res = await fetch(proxy + encodeURIComponent(url));
-        if (res.ok) return true;
-        else return false;
+        return res.ok;
       } catch (err) {
         return false;
       }
     }
 
-    async function findValidVideo() {
-      document.getElementById('result').textContent = 'Searching for a valid video...';
-      document.getElementById('videoFrame').style.display = 'none';
+    function updateTimer() {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      document.getElementById('status').innerHTML = `Looking for a valid video. This might take a while.<br>Elapsed Time: ${elapsed} seconds`;
+    }
 
-      let attempts = 0;
-      while (attempts < 50) {  // max 50 tries
-        const id = generateVideoId();
-        const exists = await checkIfVideoExists(id);
+    async function startSearch() {
+      document.getElementById('videoFrame').style.display = 'none';
+      document.getElementById('status').innerHTML = `Starting search...`;
+      
+      startTime = Date.now();
+      clearInterval(timerInterval);
+      timerInterval = setInterval(updateTimer, 1000);
+      updateTimer();
+
+      let found = false;
+      while (!found) {
+        const id = generateRandomID();
+        const exists = await videoExists(id);
         if (exists) {
-          const link = `https://www.youtube.com/watch?v=${id}`;
-          document.getElementById('result').innerHTML = `<a href="${link}" target="_blank">${link}</a>`;
+          clearInterval(timerInterval);
+          const url = `https://www.youtube.com/watch?v=${id}`;
+          document.getElementById('status').innerHTML = `✅ Found a valid video!<br><a href="${url}" target="_blank">${url}</a>`;
           const iframe = document.getElementById('videoFrame');
           iframe.src = `https://www.youtube.com/embed/${id}`;
           iframe.style.display = 'block';
-          return;
+          found = true;
         }
-        attempts++;
       }
-
-      document.getElementById('result').textContent = 'Failed to find a valid video after many tries. Try again!';
     }
   </script>
 </body>
