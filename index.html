@@ -1,117 +1,393 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Fast Random YouTube Video</title>
-  <style>
-    body {
-      background: #111;
-      color: #fff;
-      font-family: Arial, sans-serif;
-      text-align: center;
-      padding: 40px;
-    }
-
-    button {
-      padding: 12px 24px;
-      font-size: 18px;
-      background-color: red;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-
-    #status {
-      margin-top: 20px;
-      font-size: 18px;
-    }
-
-    a {
-      color: #00bfff;
-    }
-
-    iframe {
-      margin-top: 20px;
-      width: 560px;
-      height: 315px;
-      border: none;
-      display: none;
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Fully Random YouTube Video Generator</title>
+<style>
+  body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 18px; color:#111; }
+  h1 { margin: 0 0 8px 0; font-size: 20px; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; align-items:center; }
+  button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; background:#f6f6f6; cursor:pointer; }
+  button:active { transform:translateY(1px); }
+  label { font-size:13px; color:#444; display:flex; gap:6px; align-items:center; }
+  input[type=number] { width:80px; padding:6px; border-radius:6px; border:1px solid #ddd; }
+  #stats { display:flex; gap:18px; margin-top:8px; color:#222; }
+  .stat { font-size:13px; }
+  .log { margin-top:12px; max-height:220px; overflow:auto; background:#fafafa; border:1px solid #eee; padding:8px; font-family:monospace; font-size:12px; border-radius:6px; }
+  #player { margin-top:12px; }
+  iframe { width:100%; height:480px; border:0; border-radius:8px; background:#000; }
+  small { color:#666; }
+  .meta { margin-top:8px; }
+  .found { color:green; font-weight:600; }
+  .error { color:#b00; }
+  @media (max-width:720px){ iframe{height:280px;} }
+</style>
 </head>
 <body>
+  <h1>Fully Random YouTube Video Generator</h1>
+  <div>
+    Make sure you run this in your browser. It will generate random YouTube IDs and test them in parallel until it finds one.
+  </div>
 
-  <h1>⚡ Fast Random YouTube Video</h1>
-  <button onclick="startSearch()">Generate Random Video</button>
-  <p id="status"></p>
-  <iframe id="videoFrame"></iframe>
+  <div class="controls">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
 
-  <script>
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    const batchSize = 30;
+    <label>
+      Concurrency
+      <input id="concurrency" type="number" min="1" max="128" value="">
+    </label>
 
-    let startTime, timerInterval;
+    <label>
+      Max attempts (0 = unlimited)
+      <input id="maxAttempts" type="number" min="0" value="0">
+    </label>
 
-    function generateRandomID() {
-      let id = '';
-      for (let i = 0; i < 11; i++) {
-        id += chars.charAt(Math.floor(Math.random() * chars.length));
+    <label>
+      Per-request timeout (ms)
+      <input id="timeoutMs" type="number" min="500" value="4000" style="width:100px">
+    </label>
+
+    <label>
+      Log level
+      <select id="logLevel">
+        <option value="info">info</option>
+        <option value="verbose">verbose</option>
+        <option value="silent">silent</option>
+      </select>
+    </label>
+  </div>
+
+  <div id="stats">
+    <div class="stat">Tested: <span id="tested">0</span></div>
+    <div class="stat">Elapsed: <span id="elapsed">0.00</span>s</div>
+    <div class="stat">Attempts/sec: <span id="rate">0.0</span></div>
+    <div class="stat">Active workers: <span id="workers">0</span></div>
+    <div class="stat">Found: <span id="foundStatus">—</span></div>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div id="player"></div>
+  <div class="meta" id="meta"></div>
+
+<script>
+(() => {
+  // Character set for YouTube video IDs: A-Z a-z 0-9 - _
+  const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const ID_LENGTH = 11;
+
+  // DOM elements
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const testedEl = document.getElementById('tested');
+  const elapsedEl = document.getElementById('elapsed');
+  const rateEl = document.getElementById('rate');
+  const workersEl = document.getElementById('workers');
+  const logEl = document.getElementById('log');
+  const playerEl = document.getElementById('player');
+  const metaEl = document.getElementById('meta');
+  const concurrencyInput = document.getElementById('concurrency');
+  const maxAttemptsInput = document.getElementById('maxAttempts');
+  const timeoutMsInput = document.getElementById('timeoutMs');
+  const logLevelSelect = document.getElementById('logLevel');
+
+  // smart default concurrency: use navigator.hardwareConcurrency or 8
+  concurrencyInput.value = navigator.hardwareConcurrency ? Math.max(2, Math.min(16, navigator.hardwareConcurrency)) : 8;
+
+  let running = false;
+  let tested = 0;
+  let startTime = 0;
+  let lastUpdateTime = 0;
+  let found = false;
+  let workersActive = 0;
+  let attemptLimit = 0;
+  let timeoutMs = 4000;
+  let concurrency = 8;
+  let logLevel = 'info';
+
+  // small utility to log
+  function log(msg, level='info') {
+    if (logLevel === 'silent') return;
+    if (logLevel === 'info' && level === 'verbose') return;
+    const time = new Date().toISOString().slice(11,23);
+    const entry = `[${time}] ${msg}`;
+    const div = document.createElement('div');
+    div.textContent = entry;
+    logEl.prepend(div);
+    // keep log to reasonable size
+    while (logEl.childNodes.length > 500) logEl.removeChild(logEl.lastChild);
+  }
+
+  function updateStats() {
+    testedEl.textContent = tested.toLocaleString();
+    const elapsed = (performance.now() - startTime) / 1000;
+    elapsedEl.textContent = elapsed.toFixed(2);
+    const rate = elapsed > 0 ? (tested / elapsed) : 0;
+    rateEl.textContent = rate.toFixed(1);
+    workersEl.textContent = workersActive;
+    foundStatus.textContent = found ? 'Yes' : 'No';
+  }
+
+  // random id generator
+  function randomId() {
+    // generate 11 chars
+    let s = '';
+    for (let i=0;i<ID_LENGTH;i++) {
+      s += CHARS.charAt(Math.floor(Math.random() * CHARS.length));
+    }
+    return s;
+  }
+
+  // Helper: fetch with timeout (for oEmbed)
+  function fetchWithTimeout(url, opts={}, ms=4000) {
+    return new Promise((resolve, reject) => {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), ms);
+      fetch(url, {...opts, signal: controller.signal})
+        .then(r => { clearTimeout(id); resolve(r); })
+        .catch(err => { clearTimeout(id); reject(err); });
+    });
+  }
+
+  // Primary check: try oEmbed JSON
+  async function checkOEmbed(id, timeout) {
+    const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`;
+    try {
+      const res = await fetchWithTimeout(url, {method:'GET', mode:'cors', cache:'no-store'}, timeout);
+      if (res.ok) {
+        const json = await res.json();
+        return {found:true, via:'oembed', meta: json};
+      } else {
+        // 404, 401, etc -> not found
+        return {found:false};
       }
-      return id;
+    } catch (e) {
+      // network error or CORS or aborted: treat as fallback needed
+      return {found:false, error:e};
     }
+  }
 
-    async function videoExists(videoId) {
-      const proxy = 'https://corsproxy.io/?';
-      const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}`;
-      try {
-        const res = await fetch(proxy + encodeURIComponent(url));
-        return res.ok ? videoId : null;
-      } catch {
-        return null;
-      }
+  // Fallback check: load thumbnail image — usually 404 if video doesn't exist
+  // returns a Promise that resolves {found: true/false}
+  function checkThumbnail(id, timeout) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      // append cache-buster
+      img.src = `https://img.youtube.com/vi/${id}/hqdefault.jpg?cb=${Date.now()}`;
+      let done = false;
+      let timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        img.src = ''; // stop loading
+        resolve({found:false, timeout:true});
+      }, timeout);
+
+      img.onload = () => {
+        if (done) return;
+        clearTimeout(timer);
+        done = true;
+        // If onload fired, we assume thumbnail exists -> treat as found
+        resolve({found:true, via:'thumbnail'});
+      };
+      img.onerror = () => {
+        if (done) return;
+        clearTimeout(timer);
+        done = true;
+        resolve({found:false});
+      };
+    });
+  }
+
+  // Combined check: attempt oEmbed first, then thumbnail fallback
+  async function checkVideoId(id) {
+    const t = timeoutMs;
+    // try oEmbed
+    const o = await checkOEmbed(id, t);
+    if (o.found) return o;
+    // If oEmbed returned not found (404) we can stop; but if it returned an error (CORS/network)
+    // we try thumbnail fallback.
+    if (o.error) {
+      // fallback
+      const thumb = await checkThumbnail(id, t);
+      if (thumb.found) return {found:true, via:'thumbnail'};
+      return {found:false};
+    } else {
+      // oEmbed explicitly reported not found -> do not bother thumbnail usually,
+      // but we'll still try thumbnail as a safety net (could be false negatives)
+      const thumb = await checkThumbnail(id, t);
+      if (thumb.found) return {found:true, via:'thumbnail'};
+      return {found:false};
     }
+  }
 
-    function updateTimer() {
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      document.getElementById('status').innerHTML =
-        `Looking for a valid video. This might take a while.<br>Elapsed Time: ${elapsed} seconds`;
-    }
+  // Worker loop: each worker keeps asking for IDs and checking them until global found or stopped
+  async function workerLoop(workerIndex, idProvider) {
+    workersActive++;
+    updateStats();
+    log(`Worker ${workerIndex} started`, 'verbose');
 
-    async function startSearch() {
-      document.getElementById('videoFrame').style.display = 'none';
-      document.getElementById('status').innerHTML = `Starting search...`;
-
-      startTime = Date.now();
-      clearInterval(timerInterval);
-      timerInterval = setInterval(updateTimer, 1000);
-      updateTimer();
-
-      while (true) {
-        // Generate a batch of 30 random IDs
-        const ids = Array.from({ length: batchSize }, generateRandomID);
-
-        // Check all 30 in parallel
-        const checks = await Promise.all(ids.map(videoExists));
-
-        // Find first valid one
-        const valid = checks.find(id => id !== null);
-
-        if (valid) {
-          clearInterval(timerInterval);
-          const url = `https://www.youtube.com/watch?v=${valid}`;
-          document.getElementById('status').innerHTML =
-            `✅ Found a valid video!<br><a href="${url}" target="_blank">${url}</a>`;
-          const iframe = document.getElementById('videoFrame');
-          iframe.src = `https://www.youtube.com/embed/${valid}`;
-          iframe.style.display = 'block';
+    try {
+      while (running && !found) {
+        // check max attempts
+        if (attemptLimit > 0 && tested >= attemptLimit) {
+          log(`Reached max attempts (${attemptLimit}). Stopping.`, 'info');
+          running = false;
           break;
         }
 
-        // No valid video found, try another batch
-        await new Promise(resolve => setTimeout(resolve, 200)); // brief pause to avoid overload
+        const id = idProvider();
+        tested++;
+        if (tested % 50 === 0) updateStats();
+        // do the check
+        const res = await checkVideoId(id);
+        if (res.found) {
+          found = true;
+          running = false;
+          const via = res.via || 'unknown';
+          log(`FOUND! id=${id} via=${via}`, 'info');
+          updateStats();
+          showResult(id, res.meta || null, via);
+          break;
+        } else {
+          if (logLevel === 'verbose') log(`no: ${id}`);
+        }
+
+        // micro-yield so UI remains responsive
+        if (tested % 25 === 0) await new Promise(r => setTimeout(r, 0));
       }
+    } finally {
+      workersActive--;
+      updateStats();
+      log(`Worker ${workerIndex} stopped`, 'verbose');
     }
-  </script>
+  }
+
+  // Show found video in UI
+  function showResult(id, meta, via) {
+    playerEl.innerHTML = `
+      <div style="margin-top:10px">
+        <div class="found">Found video: <a href="https://www.youtube.com/watch?v=${id}" target="_blank" rel="noopener noreferrer">https://www.youtube.com/watch?v=${id}</a></div>
+        <div style="margin-top:8px">
+          <iframe src="https://www.youtube.com/embed/${id}?autoplay=1" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        </div>
+      </div>
+    `;
+    if (meta) {
+      metaEl.innerHTML = `
+        <div><strong>Title:</strong> ${escapeHtml(meta.title || '—')}</div>
+        <div><strong>Author:</strong> ${escapeHtml(meta.author_name || '—')}</div>
+        <div><strong>Provider:</strong> ${escapeHtml(meta.provider_name || 'YouTube')}</div>
+        <div style="margin-top:6px"><small>Verified via oEmbed (fast & accurate when allowed by CORS).</small></div>
+      `;
+    } else {
+      metaEl.innerHTML = `<div><small>Metadata unavailable (oEmbed not returned or blocked). Previewed via iframe/thumbnail.</small></div>`;
+    }
+  }
+
+  // small escape helper
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (m) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  // Start function: spawns concurrency workers
+  async function startSearching() {
+    if (running) return;
+    // init
+    running = true;
+    found = false;
+    tested = 0;
+    startTime = performance.now();
+    lastUpdateTime = startTime;
+    playerEl.innerHTML = '';
+    metaEl.innerHTML = '';
+    logEl.innerHTML = '';
+
+    // read user settings
+    concurrency = parseInt(concurrencyInput.value, 10) || 8;
+    attemptLimit = parseInt(maxAttemptsInput.value, 10) || 0;
+    timeoutMs = parseInt(timeoutMsInput.value, 10) || 4000;
+    logLevel = logLevelSelect.value || 'info';
+
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    log(`Started search — concurrency=${concurrency} timeout=${timeoutMs}ms maxAttempts=${attemptLimit || 'unlimited'}`, 'info');
+
+    // simple id provider: just randomId() — could be extended to use heuristics/prefixes
+    const idProvider = () => randomId();
+
+    // spawn worker pool
+    const workers = [];
+    for (let i = 0; i < concurrency; i++) {
+      workers.push(workerLoop(i+1, idProvider));
+    }
+
+    // periodic UI updater
+    const uiInterval = setInterval(() => { updateStats(); }, 200);
+
+    // wait for workers to finish (either found or stopped)
+    await Promise.race([
+      Promise.allSettled(workers),
+      new Promise(resolve => {
+        // if running becomes false (user stops), we resolve
+        const stopChecker = setInterval(() => {
+          if (!running) {
+            clearInterval(stopChecker);
+            resolve();
+          }
+        }, 100);
+      })
+    ]);
+
+    clearInterval(uiInterval);
+    updateStats();
+
+    if (!found) {
+      log('Stopped without finding a video.', 'info');
+    }
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    running = false;
+  }
+
+  // Stop function
+  function stopSearching() {
+    if (!running) return;
+    running = false;
+    log('User stopped the search.', 'info');
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  // Hook buttons
+  startBtn.addEventListener('click', () => startSearching().catch(e => {
+    log('Error: ' + e, 'error');
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    running = false;
+  }));
+  stopBtn.addEventListener('click', stopSearching);
+
+  // quick UI update loop (1/sec)
+  let foundStatus = document.getElementById('foundStatus');
+  setInterval(() => {
+    // update stats more often
+    updateStats();
+  }, 1000);
+
+  // expose small helpers to the page console for debugging
+  window._rytg = {
+    start: startSearching,
+    stop: stopSearching,
+    randomId,
+    checkVideoId,
+    getState: () => ({running, tested, found, workersActive, concurrency, attemptLimit, timeoutMs})
+  };
+
+  // initial log
+  log('Ready. Press Start to begin searching (runs entirely in your browser).', 'info');
+})();
+</script>
 </body>
 </html>
