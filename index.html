@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>YouGenerator</title>
+<title>YouGenerator — Random YouTube Video Finder</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 <style>
@@ -25,10 +25,18 @@
     box-shadow: 0 8px 18px rgba(0,0,0,0.07);
   }
 
-  h1 {
-    margin-top: 0;
-    font-size: 26px;
-    font-weight: 600;
+  #titleImage {
+    width: 100%;
+    max-width: 320px;
+    display: block;
+    margin: 0 auto 10px auto;
+  }
+
+  #description {
+    font-size: 13px;
+    line-height: 1.4;
+    color: #333;
+    margin-bottom: 18px;
   }
 
   .controls {
@@ -89,6 +97,23 @@
     font-size: 14px;
   }
 
+  #cycleLink {
+    margin-top: 14px;
+    font-size: 14px;
+    color: #0077cc;
+    word-break: break-all;
+    font-weight: 600;
+  }
+
+  iframe {
+    width: 100%;
+    height: 480px;
+    border: none;
+    border-radius: 10px;
+    margin-top: 8px;
+    background: black;
+  }
+
   .log {
     margin-top: 20px;
     background: #111;
@@ -101,15 +126,6 @@
     font-size: 12px;
   }
 
-  iframe {
-    width: 100%;
-    height: 480px;
-    border: none;
-    border-radius: 10px;
-    margin-top: 18px;
-    background: black;
-  }
-
   @media(max-width: 700px){
     iframe { height: 260px; }
   }
@@ -119,10 +135,10 @@
 <body>
 <div class="container">
 
-<h1>YouGenerator</h1>
+<img id="titleImage" src="IMG_9137.png" alt="YouGenerator">
 
-<div>
-  This tool is a fully random YouTube video generator that rapidly scans randomly generated video IDs until it discovers a real, valid YouTube video. It uses strict multi-step validation to eliminate false positives, ensuring that only genuine videos make it through. While searching, it launches multiple asynchronous workers to maximize speed and efficiency, all while displaying real-time statistics such as total attempts, elapsed time, attempts per second, and active workers. Users can adjust concurrency, timeouts, and attempt limits, each supported by clear explanations that describe how these variables affect performance. Once a valid video is found, the tool automatically previews it in an embedded player and logs the process, creating an interactive and transparent experience while diving into the vast randomness of YouTube’s ID space.
+<div id="description">
+This tool is a fully random YouTube video generator that rapidly scans randomly generated video IDs until it discovers a real, valid YouTube video. It uses strict multi-step validation to eliminate false positives, ensuring that only genuine videos make it through. While searching, it launches multiple asynchronous workers to maximize speed and efficiency, all while displaying real-time statistics such as total attempts, elapsed time, attempts per second, and active workers. Users can adjust concurrency, timeouts, and attempt limits, each supported by clear explanations that describe how these variables affect performance. Once a valid video is found, the tool automatically previews it in an embedded player and logs the process, creating an interactive and transparent experience while diving into the vast randomness of YouTube’s ID space.
 </div>
 
 <div class="controls">
@@ -142,7 +158,7 @@
   <div class="control-group">
     <label>Per-Request Timeout (ms)</label>
     <input id="timeoutMs" type="number" value="4000">
-    <div class="explain">If oEmbed or info check takes longer, it's ignored. 4000–7000 recommended.</div>
+    <div class="explain">If the validation check takes longer than this, it gets ignored.</div>
   </div>
 
   <div class="control-group">
@@ -170,82 +186,47 @@
   <div>Found: <b id="foundStatus">No</b></div>
 </div>
 
-<div class="log" id="log"></div>
+<!-- NEW: live cycling preview -->
+<div id="cycleLink">URL Preview: —</div>
 
 <div id="player"></div>
 
+<div class="log" id="log"></div>
+
 <script>
-/* ————————————————————————————————————————————————
-   STRICT VALIDATION (NO FALSE POSITIVES)
-   ———————————————————————————————————————————————— */
-
+/* strict validation */
 const CHARS="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-const IDL=11;
+function randomID(){let s="";for(let i=0;i<11;i++) s+=CHARS[(Math.random()*64)|0];return s;}
 
-function randomID(){
-  let s="";
-  for(let i=0;i<IDL;i++) s+=CHARS[(Math.random()*64)|0];
-  return s;
-}
-
-// Fetch with timeout
-function timeoutFetch(url, ms){
+async function timeoutFetch(url,ms){
   return Promise.race([
     fetch(url),
     new Promise((_,rej)=>setTimeout(()=>rej("timeout"),ms))
   ]);
 }
 
-// Check video using get_video_info
-async function checkInfo(id, timeout){
+async function checkInfo(id,timeout){
   try{
-    const res = await timeoutFetch(
+    const r=await timeoutFetch(
       `https://www.youtube.com/get_video_info?video_id=${id}&el=embedded&hl=en`,
       timeout
     );
-    if(!res.ok) return false;
-
-    const text = await res.text();
-    if(text.includes("playable_in_embed") || text.includes("status=ok")) {
-      return true;
-    }
-    return false;
-  }catch(e){
-    return false;
-  }
+    if(!r.ok) return false;
+    const t=await r.text();
+    return t.includes("status=ok") || t.includes("playable_in_embed");
+  }catch(e){return false;}
 }
 
-// Check video using oEmbed
-async function checkOEmbed(id, timeout){
-  try{
-    const res = await timeoutFetch(
-      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`,
-      timeout
-    );
-    return res.ok;
-  }catch(e){
-    return false;
-  }
-}
+async function verifyVideo(id,timeout){ return await checkInfo(id,timeout); }
 
-// Combined strict validation
-async function verifyVideo(id, timeout){
-  const info = await checkInfo(id, timeout);
-  if(!info) return false;
-  return true; // info check is already accurate enough
-}
-
-/* ————————————————————————————————————————————————
-   SEARCH ENGINE
-   ———————————————————————————————————————————————— */
-
+/* Search engine */
 let run=false, tested=0, startTime=0, workers=0, found=false;
 let concurrency=8, maxAttempts=0, timeoutMs=4000;
 
 const logBox=document.getElementById("log");
 function log(msg){
   if(document.getElementById("logLevel").value==="silent") return;
-  logBox.innerHTML = msg+"<br>"+logBox.innerHTML;
+  logBox.innerHTML=msg+"<br>"+logBox.innerHTML;
 }
 
 function updateStats(){
@@ -257,18 +238,24 @@ function updateStats(){
   document.getElementById("foundStatus").textContent=found?"Yes":"No";
 }
 
+function showVideo(id){
+  document.getElementById("player").innerHTML=
+    `<iframe src="https://www.youtube.com/embed/${id}?autoplay=1"></iframe>`;
+}
+
 async function worker(){
   workers++;
   updateStats();
 
   while(run && !found){
-    if(maxAttempts>0 && tested>=maxAttempts){
-      run=false; break;
-    }
-
+    if(maxAttempts>0 && tested>=maxAttempts){run=false; break;}
     const id=randomID();
-    tested++;
+    const url=`https://youtube.com/watch?v=${id}`;
 
+    /* LIVE CYCLING PREVIEW */
+    document.getElementById("cycleLink").textContent = "URL Preview: " + url;
+
+    tested++;
     const ok = await verifyVideo(id, timeoutMs);
     if(ok){
       found=true;
@@ -281,11 +268,6 @@ async function worker(){
 
   workers--;
   updateStats();
-}
-
-function showVideo(id){
-  document.getElementById("player").innerHTML=
-    `<iframe src="https://www.youtube.com/embed/${id}?autoplay=1"></iframe>`;
 }
 
 async function start(){
@@ -317,16 +299,14 @@ async function start(){
   },200);
 }
 
-function stop(){
-  run=false;
-}
+function stop(){run=false;}
 
 document.getElementById("startBtn").onclick=start;
 document.getElementById("stopBtn").onclick=stop;
 
-// Set smart default concurrency
-document.getElementById("concurrency").value=
+document.getElementById("concurrency").value =
   navigator.hardwareConcurrency ? Math.min(16, navigator.hardwareConcurrency) : 8;
+
 </script>
 
 </div>
